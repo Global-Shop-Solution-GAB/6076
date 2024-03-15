@@ -1,0 +1,202 @@
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Customer: Davico
+'Coder: FEQ (Sisco)
+'Date: 8/25/2020
+
+'This is a piece of the integration with 1-800-Radiator. In this piece, we are going to be creating csv files for 1-800-Radiator with information on Invoices for the day
+'The program will create a csv file for every invoice where the code_sort = 'EDI1800' in the Order History header information.
+'The directory where the files will be placed will be read from the EDI1800PARAMccc.txt file in the customer's files directory.
+
+F.Intrinsic.Control.Try
+
+'First we want to check to make sure that the param file exists
+F.Intrinsic.Control.CallSub(CheckParams)
+
+F.Intrinsic.Control.CallSub(GrabData, "DIRECTORY", V.Args.Directory)
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ErrorHandling.Start
+F.Intrinsic.Control.Try
+V.Local.sFilePath.Declare(String, "")
+V.Local.sError.Declare(String, "")
+V.Local.bCheck.Declare(Boolean, False)
+
+'This will be running from the Task Scheduler every night, therefore we want to print the errors into a file as opposed to having it on a messagebox
+F.Intrinsic.String.Build("{0}\INVCEDI{1}.txt", V.Caller.FilesDir, V.Caller.CompanyCode, V.Local.sFilePath)
+
+F.Intrinsic.File.Exists(V.Local.sFilePath, V.Local.bCheck)
+F.Intrinsic.Control.If(V.Local.bCheck, =, True)
+	F.Intrinsic.File.File2String(V.Local.sFilePath, V.Local.sError)
+	F.Intrinsic.String.Build("{0}{1}{1}Error Occurred on attempt done the evening of {2}{1}Error description: {3}.", V.Local.sError, V.Ambient.NewLine, V.Ambient.Now, V.Args.ERRDESC, V.Local.sError)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("Error Occurred on attempt done the evening of {1}{0}Error description: {2}.", V.Ambient.NewLine, V.Ambient.Now, V.Args.ERRDESC, V.Local.sError)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.File.String2File(V.Local.sFilePath, V.Local.sError)
+
+F.Intrinsic.Control.Catch
+F.Intrinsic.Control.EndTry
+Program.Sub.ErrorHandling.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.CheckParams.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sParams.Declare(String, "")
+V.Local.sContent.Declare(String, "")
+V.Local.sDirectory.Declare(String, "")
+V.Local.sFileLocation.Declare(String, "")
+V.Local.bCheck.Declare(Boolean, False)
+
+F.Intrinsic.String.Build("{0}\EDI1800PARAM{1}.txt", V.Caller.FilesDir, V.Caller.CompanyCode, V.Local.sFileLocation)
+F.Intrinsic.File.Exists(V.Local.sFileLocation, V.Local.bCheck)
+F.Intrinsic.Control.If(V.Local.bCheck)
+	'Parse the file to grab the file directory where we will be dropoping the files
+	F.Intrinsic.File.File2String(V.Local.sFileLocation, V.Local.sContent)
+	
+	'The path will be stored in the '1800RADIATOR INVC DIR'
+	F.Intrinsic.String.Split(V.Local.sContent.UCase, "1800RADIATOR INVC DIR", V.Local.sParams)
+	F.Intrinsic.Control.If(V.Local.sParams.UBound, >, 0)
+		
+		F.Intrinsic.String.Replace(V.Local.sParams(1).UCase, "= ", "", V.Local.sParams)
+		F.Intrinsic.String.Split(V.Local.sParams, V.Ambient.NewLine, V.Local.sDirectory)
+		
+		F.Intrinsic.File.DirExists(V.Local.sDirectory(0), V.Local.bCheck)
+		F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+		
+			F.Intrinsic.File.CreateDir(V.Local.sDirectory(0))
+		
+		F.Intrinsic.Control.EndIf
+				
+	F.Intrinsic.Control.Else
+		'The Param File did not contain the expected directory
+		F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the '1800RADIATOR INVC DIR'.", V.Caller.CompanyCode, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Else
+	'Parameter file was not found and we cannot proceed
+	F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not exist.", V.Caller.CompanyCode, V.Local.sError)
+	F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Variable.AddRV("DIRECTORY", V.Local.sDirectory(0))
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.CheckParams.End
+
+Program.Sub.GrabData.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sSql.Declare(String, "")
+V.Local.iInv.Declare(Long, 0)
+V.Local.dDate.Declare(Date, "01/01/1900")
+
+V.Local.dDate.Set(V.Ambient.Date)
+'V.Local.dDate.Set("01/29/2020")
+
+'We are going to grab all Invoices created today where the shipment header code sort is 'EDI1800'
+F.ODBC.Connection!conx.OpenCompanyConnection
+
+F.Data.DataTable.CreateFromSQL("dtInvHead", "conx", "Select * from V_ORDER_HIST_HEAD where CODE_SORT = 'EDI1800'", True)
+'F.Data.DataTable.CreateFromSQL("dtInvHead", "conx", "Select * from V_ORDER_HIST_HEAD", True)
+
+'We loop through to see if any lines were invoiced in today's date
+F.Intrinsic.Control.For(V.Local.iInv, 0, V.DataTable.dtInvHead.RowCount--, 1)
+	F.Intrinsic.String.Build("Select * from V_ORDER_HIST_LINE where ORDER_NO = '{0}' and ORDER_SUFFIX = '{1}' and DATE_INVOICE = '{2}' order by ORDER_LINE ASC", V.DataTable.dtInvHead(V.Local.iInv).ORDER_NO!FieldValTrim, V.DataTable.dtInvHead(V.Local.iInv).ORDER_SUFFIX!FieldValTrim, V.Local.dDate.PervasiveDate, V.Local.sSql)
+	
+	F.Data.DataTable.CreateFromSQL("dtInvLines", "conx", V.Local.sSql, True)
+	
+	F.Intrinsic.Control.If(V.DataTable.dtInvLines.RowCount, >, 0)
+		
+		'Process invoice into the file
+		F.Intrinsic.Control.CallSub(ProcessInvoiceFile, "HEADLINE", V.Local.iInv, "DIRECTORY", V.Args.Directory)
+		
+	F.Intrinsic.Control.EndIf
+	
+	F.Data.DataTable.Close("dtInvLines")
+	
+F.Intrinsic.Control.Next(V.Local.iInv)
+
+F.Data.DataTable.Close("dtInvHead")
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.GrabData.End
+
+Program.Sub.ProcessInvoiceFile.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sFileBody.Declare(String, "")
+V.Local.sFileLoc.Declare(String, "")
+V.Local.sDateFormat.Declare(String, "")
+V.Local.fFreight.Declare(Float, 0.00)
+V.Local.iLoop.Declare(Long, 0)
+V.Local.iHead.Declare(Long, 0)
+
+'This is where the magic happens
+V.Local.iHead.Set(V.Args.HEADLINE.Long)
+V.Local.fFreight.Set(0.00)
+
+F.Intrinsic.String.Format(V.Ambient.Date, "yyyy-mm-dd", V.Local.sDateFormat)
+
+'The header information: First line is just R,,  Second line is H, Davico Mfg, Invoice Number, today's date (yyyy-mm-dd), PO#
+F.Intrinsic.String.Build("R,,{0}H,Davico Mfg,{1},{2},{3}", V.Ambient.NewLine, V.DataTable.dtInvHead(V.Local.iHead).INVOICE!FieldValTrim, V.Local.sDateFormat, V.DataTable.dtInvHead(V.Local.iHead).CUSTOMER_PO!FieldValTrim, V.Local.sFileBody)
+
+F.Intrinsic.Control.For(V.Local.iLoop, 0, V.DataTable.dtInvLines.RowCount--, 1)
+	F.Intrinsic.Control.If(V.DataTable.dtInvLines(V.Local.iLoop).ORDER_LINE!FieldValTrim, <>, "8000")
+		
+		'Each Invoice Line will have a line in the INVC file with the following information:
+		'D, Item(Line User 1), Part Number, Quantity invoiced, , Amount Invoiced for line (Price x qty)
+		F.Intrinsic.String.Build("{0}{1}D,{2},{3},{4},,{5}", V.Local.sFileBody, V.Ambient.NewLine, V.DataTable.dtInvLines(V.Local.iLoop).USER_1!FieldValTrim, V.DataTable.dtInvLines(V.Local.iLoop).PART!FieldValTrim, V.DataTable.dtInvLines(V.Local.iLoop).QTY_SHIPPED!FieldValFloat, V.DataTable.dtInvLines(V.Local.iLoop).EXTENSION!FieldValFloat, V.Local.sFileBody)
+		
+	F.Intrinsic.Control.Else
+		'The freight for the shipment is stored in the line 8000 of the shipment in the ORDER_HIST_LINE
+		V.Local.fFreight.Set(V.DataTable.dtInvLines(V.Local.iLoop).EXTENSION!FieldValFloat)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iLoop)
+
+'The last line will be S,,,,Freight
+F.Intrinsic.String.Build("{0}{1}S,,,,{2}", V.Local.sFileBody, V.Ambient.NewLine, V.Local.fFreight, V.Local.sFileBody)
+
+'Now we save the file where it needs to be saved
+F.Intrinsic.String.Build("{0}\{1}-{2}.INV", V.Args.Directory, V.DataTable.dtInvHead(V.Local.iHead).INVOICE!FieldValTrim, V.Local.sDateFormat, V.Local.sFileLoc)
+
+F.Intrinsic.File.String2File(V.Local.sFileLoc, V.Local.sFileBody)
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+F.Intrinsic.Control.CallSub(Unload)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.ProcessInvoiceFile.End
