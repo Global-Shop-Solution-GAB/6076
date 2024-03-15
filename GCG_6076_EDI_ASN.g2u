@@ -1,0 +1,218 @@
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+
+'Customer: Davico
+'Coder: FEQ (Sisco)
+'Date: 8/25/2020
+
+'This is a piece of the integration with 1-800-Radiator. In this piece, we are going to be creating csv files for 1-800-Radiator with information on Shipments for the day
+'The program will create a csv file for every order where the code_sort = 'EDI1800' in the shipment header information.
+'The directory where the files will be placed will be read from the EDI1800PARAMccc.txt file in the customer's files directory.
+
+F.Intrinsic.Control.Try
+
+'First we want to check to make sure that the param file exists
+F.Intrinsic.Control.CallSub(CheckParams)
+
+F.Intrinsic.Control.CallSub(GrabData, "DIRECTORY", V.Args.Directory)
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ErrorHandling.Start
+F.Intrinsic.Control.Try
+V.Local.sFilePath.Declare(String, "")
+V.Local.sError.Declare(String, "")
+V.Local.bCheck.Declare(Boolean, False)
+
+'This will be running from the Task Scheduler every night, therefore we want to print the errors into a file as opposed to having it on a messagebox
+F.Intrinsic.String.Build("{0}\ASNEDI{1}.txt", V.Caller.FilesDir, V.Caller.CompanyCode, V.Local.sFilePath)
+
+F.Intrinsic.File.Exists(V.Local.sFilePath, V.Local.bCheck)
+F.Intrinsic.Control.If(V.Local.bCheck, =, True)
+	F.Intrinsic.File.File2String(V.Local.sFilePath, V.Local.sError)
+	F.Intrinsic.String.Build("{0}{1}{1}Error Occurred on attempt done the evening of {2}{1}Error description: {3}.", V.Local.sError, V.Ambient.NewLine, V.Ambient.Now, V.Args.ERRDESC, V.Local.sError)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("Error Occurred on attempt done the evening of {1}{0}Error description: {2}.", V.Ambient.NewLine, V.Ambient.Now, V.Args.ERRDESC, V.Local.sError)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.File.String2File(V.Local.sFilePath, V.Local.sError)
+
+F.Intrinsic.Control.Catch
+F.Intrinsic.Control.EndTry
+Program.Sub.ErrorHandling.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.CheckParams.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sParams.Declare(String, "")
+V.Local.sContent.Declare(String, "")
+V.Local.sDirectory.Declare(String, "")
+V.Local.sFileLocation.Declare(String, "")
+V.Local.bCheck.Declare(Boolean, False)
+
+F.Intrinsic.String.Build("{0}\EDI1800PARAM{1}.txt", V.Caller.FilesDir, V.Caller.CompanyCode, V.Local.sFileLocation)
+F.Intrinsic.File.Exists(V.Local.sFileLocation, V.Local.bCheck)
+F.Intrinsic.Control.If(V.Local.bCheck)
+	'Parse the file to grab the file directory where we will be dropoping the files
+	F.Intrinsic.File.File2String(V.Local.sFileLocation, V.Local.sContent)
+	
+	'The path will be stored in the '1800RADIATOR ASN DIR'
+	F.Intrinsic.String.Split(V.Local.sContent.UCase, "1800RADIATOR ASN DIR", V.Local.sParams)
+	F.Intrinsic.Control.If(V.Local.sParams.UBound, >, 0)
+		
+		F.Intrinsic.String.Replace(V.Local.sParams(1).UCase, "= ", "", V.Local.sParams)
+		F.Intrinsic.String.Split(V.Local.sParams, V.Ambient.NewLine, V.Local.sDirectory)
+		
+		F.Intrinsic.File.DirExists(V.Local.sDirectory(0), V.Local.bCheck)
+		F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+		
+			F.Intrinsic.File.CreateDir(V.Local.sDirectory(0))
+		
+		F.Intrinsic.Control.EndIf
+				
+	F.Intrinsic.Control.Else
+		'The Param File did not contain the expected directory
+		F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the '1800RADIATOR ASN DIR'.", V.Caller.CompanyCode, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Else
+	'Parameter file was not found and we cannot proceed
+	F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not exist.", V.Caller.CompanyCode, V.Local.sError)
+	F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Variable.AddRV("DIRECTORY", V.Local.sDirectory(0))
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.CheckParams.End
+
+Program.Sub.GrabData.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sSql.Declare(String, "")
+V.Local.iShip.Declare(Long, 0)
+V.Local.dDate.Declare(Date, "01/01/1900")
+
+V.Local.dDate.Set(V.Ambient.Date)
+V.Local.dDate.Set("01/29/2020")
+
+'We are going to grab all shipments where the shipment header code sort is 'EDI1800'
+F.ODBC.Connection!conx.OpenCompanyConnection
+
+'F.Intrinsic.String.Build("Select * from  V_SHIPMENT_HEADER where CODE_SORT = 'EDI1800' and DATE_SHIPPED = '{0}'", V.Ambient.Date.PervasiveDate, V.Local.sSql)
+
+F.Data.DataTable.CreateFromSQL("dtShipHead", "conx", "Select * from V_SHIPMENT_HEADER where CODE_SORT = 'EDI1800'", True)
+'For Testing purposes
+'F.Data.DataTable.CreateFromSQL("dtShipHead", "conx", "Select * from V_SHIPMENT_HEADER", True)
+
+'Now we loop through the shipment header and see if any of those shipments shipped at least one line today
+F.Intrinsic.Control.For(V.Local.iShip, 0, V.DataTable.dtShipHead.RowCount--, 1)
+	F.Intrinsic.String.Build("Select * from V_SHIPMENT_LINES where ORDER_NO = '{0}' and ORDER_SUFFIX = '{1}' and DATE_SHIP = '{2}'", V.DataTable.dtShipHead(0).ORDER_NO!FieldValTrim, V.DataTable.dtShipHead(0).ORDER_SUFFIX!FieldValTrim, V.Local.dDate.PervasiveDate, V.Local.sSql)
+	
+	F.Data.DataTable.CreateFromSQL("dtShipLines", "conx", V.Local.sSql, True)
+	
+	F.Intrinsic.Control.If(V.DataTable.dtShipLines.RowCount, >, 0)
+		
+		'We will process the shipment and create the file
+		F.Intrinsic.Control.CallSub(ProcessShipmentFile, "HEADLINE", V.Local.iShip, "DIRECTORY", V.Args.Directory)
+		
+	F.Intrinsic.Control.EndIf
+	
+	F.Data.DataTable.Close("dtShipLines")
+	
+F.Intrinsic.Control.Next(V.Local.iShip)
+
+F.Data.DataTable.Close("dtShipHead")
+
+'Do we also need to look at the invoiced stuff? If so, we will need to go into the Order hist table?
+'NAH
+
+
+F.ODBC.Connection!conx.Close
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+F.Intrinsic.Control.CallSub(Unload)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.GrabData.End
+
+Program.Sub.ProcessShipmentFile.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sFileBody.Declare(String, "")
+V.Local.sFileLoc.Declare(String, "")
+V.Local.sDateFormat.Declare(String, "")
+V.Local.iLoop.Declare(Long, 0)
+V.Local.iHead.Declare(Long, 0)
+V.Local.fTotalQty.Declare(Float, 0.0)
+V.Local.fTotalWeight.Declare(Float, 0.0)
+
+V.Local.iHead.Set(V.Args.HEADLINE.Long)
+
+F.Intrinsic.String.Format(V.Ambient.Date, "yyyy-mm-dd", V.Local.sDateFormat)
+
+'Put the header information in the file. The first line is just R,,,, the second line will have H (For header), PO#, Today's date (format yyyy-mm-dd), 0
+F.Intrinsic.String.Build("R,,,,{0}H,{1},{2},0", V.Ambient.NewLine, V.DataTable.dtShipHead(V.Local.iHead).CUSTOMER_PO!FieldValTrim, V.Local.sDateFormat, V.Local.sFileBody)
+
+F.Data.DataTable.Compute("dtShipLines", "SUM(QTY_SHIPPED)", "", V.Local.fTotalQty)
+F.Data.DataTable.Compute("dtShipLines", "SUM(WEIGHT)", "", V.Local.fTotalWeight)
+
+'Third line will have SH (Shipping Info), Total quantity shipped, EA, Total Weight, LB, Carrier Name, , ,Tracking number, , , , , Shipping Date
+F.Intrinsic.String.Build("{0}{1}SH,{2},EA,{3},LB,{4},,,{5},,,,,{6}", V.Local.sFileBody, V.Ambient.NewLine, V.Local.fTotalQty, V.Local.fTotalWeight, V.DataTable.dtShipHead(V.Local.iHead).SHIP_VIA!FieldValTrim, V.DataTable.dtShipHead(V.Local.iHead).TRACKING_NO!FieldValTrim, V.Local.sDateFormat, V.Local.sFileBody)
+
+'Fourth line wil have O, PO #, , 
+F.Intrinsic.String.Build("{0}{1}O,{2},,", V.Local.sFileBody, V.Ambient.NewLine, V.DataTable.dtShipHead(V.Local.iHead).CUSTOMER_PO!FieldValTrim, V.Local.sFileBody)
+
+'The shipment header information will be in the ordinal that is passed through the variable HEADLINE
+F.Intrinsic.Control.For(V.Local.iLoop, 0, V.DataTable.dtShipLines.RowCount--, 1)
+	'Each shipment line will have a line in the ASN file which follows the format below:
+	'I, line Quantity, Item #, PartNumber, , EA, , , , , , 
+	F.Intrinsic.String.Build("{0}{1}I,{2},{3},{4},,EA,,,,,,", V.Local.sFileBody, V.Ambient.NewLine, V.DataTable.dtShipLines(V.Local.iLoop).QTY_SHIPPED!FieldValLong, V.DataTable.dtShipLines(V.Local.iLoop).LN_USER_1!FieldValTrim, V.DataTable.dtShipLines(V.Local.iLoop).PART!FieldValTrim, V.Local.sFileBody)
+	
+F.Intrinsic.Control.Next(V.Local.iLoop)
+
+F.Intrinsic.Math.Add(V.DataTable.dtShipLines.RowCount, 5, V.Local.iLoop)
+
+'Last line is the total number of rows in the file.. S, # of rows of all record types, ,
+F.Intrinsic.String.Build("{0}{1}S,{2},,", V.Local.sFileBody, V.Ambient.NewLine, V.Local.iLoop, V.Local.sFileBody)
+
+'Now we save the file where it needs to be saved
+F.Intrinsic.String.Build("{0}\{1}-{2}.ASN", V.Args.Directory, V.DataTable.dtShipHead(V.Local.iHead).CUSTOMER_PO!FieldValTrim, V.Local.sDateFormat, V.Local.sFileLoc)
+
+F.Intrinsic.File.String2File(V.Local.sFileLoc, V.Local.sFileBody)
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+F.Intrinsic.Control.CallSub(Unload)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.ProcessShipmentFile.End
