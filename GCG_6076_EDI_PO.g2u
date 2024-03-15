@@ -1,0 +1,844 @@
+Program.Sub.Preflight.Start
+V.Global.sFTPDirectory.Declare(String, "")
+V.Global.sEDIDirectory.Declare(String, "")
+V.Global.sERRDirectory.Declare(String, "")
+V.Global.sCONDirectory.Declare(String, "")
+V.Global.sLOGDirectory.Declare(String, "")
+
+V.Global.sSingleFile.Declare(String, "")
+V.Global.sFileEDIContents.Declare(String, "")
+
+V.Global.sLogging.Declare(String, "")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Customer: Davico
+'Coder: FEQ (Sisco)
+'Date: 8/25/2020
+
+'This is a piece of the integration with 1-800-Radiator. In this piece, we are going to be reading in an incoming file from 1800Radiator and parsing it to create a file for the EDI
+'We expect the file to be in a location defined by the param file located in the Global/Files directory named EDI1800PARAMccc.txt where ccc is the company code.
+'This script is specifically creating Purchase Orders for 1-800-Radiator on their system.
+
+'The EDI1800PARAMccc.txt file should look like this:
+
+'1800Radiator FTP DIR  = C:\APPS\GLOBAL\EDI\FTP_COPY
+'GSS EDI INBOUND DIR   = C:\APPS\GLOBAL\EDI\INBOUND
+'GSS GAB INBND ERROR   = C:\APPS\GLOBAL\EDI\ERROR
+'GSS GAB INBND CONVRTD = C:\APPS\GLOBAL\EDI\CONVERTED
+'GSS GAB INBND LOGGING = C:\APPS\GLOBAL\EDI\LOGS
+'1800Radiator ASN DIR  = C:\APPS\GLOBAL\EDI\ASN
+'1800Radiator Invc DIR = C:\APPS\GLOBAL\EDI\INVOICE
+'EMAIL FROM ADDRESS    = xyz123@GSSMAIL.COM
+'EMAIL TO ADDRESS      = xyz123@GSSMAIL.COM
+
+'That is to say, when the program reads the param file, it will expect the parameters to be with the exact spacing as above, otherwise it will not find the appropriate directories.
+'The 1800Radiator FTP DIR is the directory where the files coming in from the FTP will be grabbed to be processed
+'The GSS EDI INBOUND DIR is the directory where the processed file ready for EDI will be saved to
+'The GSS GAB INBND ERROR is the directory where any files that had errors will be copied to
+'The GSS GAB INBND CONVRTD is the directory where the files that were processed correctly will be copied into
+'The GSS GAB INBND LOGGING is the directory where the logging for each attempted process will be printed.
+
+F.Intrinsic.Control.Try
+
+'First we want to check to make sure that the param file exists
+F.Intrinsic.Control.CallSub(CheckParams)
+
+F.Intrinsic.Control.CallSub(GrabData)
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ErrorHandling.Start
+F.Intrinsic.Control.Try
+V.Local.sFilePath.Declare(String, "")
+V.Local.sError.Declare(String, "")
+V.Local.sDate.Declare(String, "")
+V.Local.bCheck.Declare(Boolean, False)
+
+F.Intrinsic.Control.If(V.Global.sLOGDirectory.Trim, =, "")
+	V.Global.sLOGDirectory.Set(V.Caller.FilesDir)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Format(V.Ambient.Date, "YYYYMMDD", V.Local.sDate)
+
+'This will be running from the Task Scheduler every night, therefore we want to print the errors into a file as opposed to having it on a messagebox
+F.Intrinsic.String.Build("{0}\ASNEDI{1}{2}.txt", V.Global.sLOGDirectory, V.Caller.CompanyCode, V.Local.sDate, V.Local.sFilePath)
+
+F.Intrinsic.String.Build("{0}{1}{1}Error Occurred on attempt done the evening of {2}{1}Error description: {3}{1}.", V.Global.sLogging, V.Ambient.NewLine, V.Ambient.Now, V.Args.ERRDESC, V.Global.sLogging)
+
+F.Intrinsic.File.String2File(V.Local.sFilePath, V.Global.sLogging)
+
+F.Intrinsic.Control.Catch
+F.Intrinsic.Control.EndTry
+Program.Sub.ErrorHandling.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.CheckParams.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sParams.Declare(String, "")
+V.Local.sContent.Declare(String, "")
+V.Local.sTemp.Declare(String, "")
+V.Local.sFileLocation.Declare(String, "")
+V.Local.bCheck.Declare(Boolean, False)
+
+F.Intrinsic.String.Build("Starting file processing for EDI.{0}Reading directories and verifying they exist.{0}", V.Ambient.NewLine, V.Global.sLogging)
+
+F.Intrinsic.String.Build("{0}\EDI1800PARAM{1}.txt", V.Caller.FilesDir, V.Caller.CompanyCode, V.Local.sFileLocation)
+F.Intrinsic.File.Exists(V.Local.sFileLocation, V.Local.bCheck)
+F.Intrinsic.Control.If(V.Local.bCheck)
+	'Parse the file to grab the file directory where we will be dropoping the files
+	F.Intrinsic.File.File2String(V.Local.sFileLocation, V.Local.sContent)
+	
+	'We are depending on 4 directories to exist:
+	'The path where the error files will be posted will be stored in path 'GSS EDI INBND ERROR'
+	F.Intrinsic.String.Split(V.Local.sContent.UCase, "GSS GAB INBND ERROR", V.Local.sParams)
+	F.Intrinsic.Control.If(V.Local.sParams.UBound, >, 0)
+		
+		F.Intrinsic.String.Split(V.Local.sParams(1).UCase, "= ", V.Local.sParams)
+		F.Intrinsic.String.Split(V.Local.sParams(1).Trim, V.Ambient.NewLine, V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}\", V.Local.sTemp(0), V.Global.sERRDirectory)
+		
+		F.Intrinsic.File.DirExists(V.Global.sERRDirectory, V.Local.bCheck)
+		F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+		
+			F.Intrinsic.File.CreateDir(V.Global.sERRDirectory)
+		
+		F.Intrinsic.Control.EndIf
+				
+	F.Intrinsic.Control.Else
+		'The Param File did not contain the expected directory 'We dont want this to prevent us from proceeding, so we will use the files directory to report errors
+		F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the 'GSS EDI INBND ERROR',{1}which is the pathe where errors will be reported. The files directory will be used for now...", V.Caller.CompanyCode, V.Ambient.NewLine, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		
+		V.Global.sERRDirectory.Set(V.Caller.FilesDir)
+		
+'		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+	'The path where the LOGS will be posted will be stored in path 'GSS EDI INBND ERROR'
+	F.Intrinsic.String.Split(V.Local.sContent.UCase, "GSS GAB INBND LOGGING", V.Local.sParams)
+	F.Intrinsic.Control.If(V.Local.sParams.UBound, >, 0)
+		
+		F.Intrinsic.String.Split(V.Local.sParams(1).UCase, "= ", V.Local.sParams)
+		F.Intrinsic.String.Split(V.Local.sParams(1).Trim, V.Ambient.NewLine, V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}\", V.Local.sTemp(0), V.Global.sLOGDirectory)
+		
+		F.Intrinsic.File.DirExists(V.Global.sLOGDirectory, V.Local.bCheck)
+		F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+		
+			F.Intrinsic.File.CreateDir(V.Global.sLOGDirectory)
+		
+		F.Intrinsic.Control.EndIf
+				
+	F.Intrinsic.Control.Else
+		'The Param File did not contain the expected directory 'We dont want this to prevent us from proceeding, so we will use the files directory to report errors
+		F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the 'GSS GAB INBND LOGGING',{1}which is the pathe where logs will be printed. The files directory will be used for now...", V.Caller.CompanyCode, V.Ambient.NewLine, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		
+		V.Global.sLOGDirectory.Set(V.Caller.FilesDir)
+		
+'		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+	'The path where the files we are reading will reside is: '1800RADIATOR FTP DIR'
+	F.Intrinsic.String.Split(V.Local.sContent.UCase, "1800RADIATOR FTP DIR", V.Local.sParams)
+	F.Intrinsic.Control.If(V.Local.sParams.UBound, >, 0)
+		
+		F.Intrinsic.String.Split(V.Local.sParams(1).UCase, "= ", V.Local.sParams)
+		F.Intrinsic.String.Split(V.Local.sParams(1).Trim, V.Ambient.NewLine, V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}\", V.Local.sTemp(0), V.Global.sFTPDirectory)
+		
+		F.Intrinsic.File.DirExists(V.Global.sFTPDirectory, V.Local.bCheck)
+		F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+		
+			F.Intrinsic.File.CreateDir(V.Global.sFTPDirectory)
+		
+		F.Intrinsic.Control.EndIf
+				
+	F.Intrinsic.Control.Else
+		'The Param File did not contain the expected directory
+		F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the '1800RADIATOR FTP DIR',{1}which is the path where incoming FTP files should be placed for the EDI process.", V.Caller.CompanyCode, V.Ambient.NewLine, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+	'The path where the file for the EDI will be placed will be: 'GSS EDI INBOUND DIR'
+	F.Intrinsic.String.Split(V.Local.sContent.UCase, "GSS EDI INBOUND DIR", V.Local.sParams)
+	F.Intrinsic.Control.If(V.Local.sParams.UBound, >, 0)
+		
+		F.Intrinsic.String.Split(V.Local.sParams(1).UCase, "= ", V.Local.sParams)
+		F.Intrinsic.String.Split(V.Local.sParams(1).Trim, V.Ambient.NewLine, V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}\", V.Local.sTemp(0), V.Global.sEDIDirectory)
+		
+		F.Intrinsic.File.DirExists(V.Global.sEDIDirectory, V.Local.bCheck)
+		F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+		
+			F.Intrinsic.File.CreateDir(V.Global.sEDIDirectory)
+		
+		F.Intrinsic.Control.EndIf
+				
+	F.Intrinsic.Control.Else
+		'The Param File did not contain the expected directory
+		F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the 'GSS EDI INBOUND DIR',{1}which is the path where the EDI ready files will be placed one the incoming FTP files are processed.", V.Caller.CompanyCode, V.Ambient.NewLine, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+	'The path where the error files will be posted will be stored in path 'GSS GAB INBND CONVRTD'
+	F.Intrinsic.String.Split(V.Local.sContent.UCase, "GSS GAB INBND CONVRTD", V.Local.sParams)
+	F.Intrinsic.Control.If(V.Local.sParams.UBound, >, 0)
+		
+		F.Intrinsic.String.Split(V.Local.sParams(1).UCase, "= ", V.Local.sParams)
+		F.Intrinsic.String.Split(V.Local.sParams(1).Trim, V.Ambient.NewLine, V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}\", V.Local.sTemp(0), V.Global.sCONDirectory)
+		
+		F.Intrinsic.Control.If(V.Global.sCONDirectory.Trim, <>, "")
+			F.Intrinsic.File.DirExists(V.Global.sCONDirectory, V.Local.bCheck)
+			F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+			
+				F.Intrinsic.File.CreateDir(V.Global.sCONDirectory)
+			
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Else
+			
+			F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the 'GSS GAB INBND CONVRTD',{1}which is the pathe where incoming FTP files should be placed for the EDI process.", V.Caller.CompanyCode, V.Ambient.NewLine, V.Local.sError)
+			F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+			F.Intrinsic.Control.CallSub(Unload)
+			
+		F.Intrinsic.Control.EndIf
+		
+				
+	F.Intrinsic.Control.Else
+		'The Param File did not contain the expected directory
+		F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not contain the path for the 'GSS GAB INBND CONVRTD',{1}which is the pathe where incoming FTP files should be placed for the EDI process.", V.Caller.CompanyCode, V.Ambient.NewLine, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Else
+	'Parameter file was not found and we cannot proceed
+	F.Intrinsic.String.Build("The param file EDI1800PARAM{0}.txt in the files directory does not exist.", V.Caller.CompanyCode, V.Local.sError)
+	F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.CheckParams.End
+
+Program.Sub.GrabData.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sFileNames.Declare(String, "")
+V.Local.sPathFile.Declare(String, "")
+V.Local.sTemp.Declare(String, "")
+V.Local.sEDIName.Declare(String, "")
+V.Local.sDestination.Declare(String, "")
+V.Local.sExt.Declare(String, "")
+V.Local.iLoop.Declare(Long, 0)
+V.Local.iReturn.Declare(Long, 0)
+
+F.Intrinsic.String.Build("{0}Reading files from the FTP directory.{1}", V.Global.sLogging, V.Ambient.NewLine, V.Global.sLogging)
+
+'We are going to be grabbing all the files in the inbound directory and parsing them to generate the EDI file
+F.Intrinsic.File.GetFileList(V.Global.sFTPDirectory, V.Local.sFileNames)
+
+'F.Intrinsic.String.Replace(V.Global.sFTPDirectory, "\", "/", V.Global.sFTPDirectory)
+'F.Intrinsic.File.GetFileList(V.Global.sFTPDirectory, 1, V.Local.sFileNames)
+
+F.Intrinsic.Control.If(V.Local.sFileNames.Trim, <>, "")
+	F.Intrinsic.String.Split(V.Local.sFileNames, ":", V.Local.sFileNames)
+	F.Intrinsic.Math.Add(V.Local.sFileNames.UBound, 1, V.Local.iReturn)
+	F.Intrinsic.String.Build("{0}{1} files found.{2}", V.Global.sLogging, V.Local.iReturn, V.Ambient.NewLine, V.Global.sLogging)
+	
+	F.Intrinsic.Control.For(V.Local.iLoop, 0, V.Local.sFileNames.UBound, 1)
+		'Check to see if it is a CSV file
+		F.Intrinsic.String.Split(V.Local.sFileNames(V.Local.iLoop), ".", V.Local.sTemp)
+		V.Local.sExt.Set(V.Local.sTemp(V.Local.sTemp.UBound))
+		F.Intrinsic.Control.If(V.Local.sExt.UCase, =, "CSV")
+			'Send file over to get gutted
+			F.Intrinsic.Control.CallSub(ProcessFile, "FILE", V.Local.sFileNames(V.Local.iLoop))
+		F.Intrinsic.Control.Else
+			'File is not CSV. Throw error and move on
+			F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Local.sFileNames(V.Local.iLoop), V.Local.sPathFile)
+			F.Intrinsic.String.Build("{0}{1}", V.Global.sERRDirectory, V.Local.sFileNames(V.Local.iLoop), V.Local.sDestination)
+			F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+			
+			F.Intrinsic.String.Build("The file {0} was not a CSV file and cannot be processed. Please find a copy of the file in directory {1}{2}{1}", V.Local.sFileNames(V.Local.iLoop).Trim,  V.Ambient.NewLine, V.Global.sERRDirectory, V.Local.sError)
+			F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+		F.Intrinsic.Control.EndIf
+		
+	F.Intrinsic.Control.Next(V.Local.iLoop)
+	
+	'Now that all files have been processed, we print the final EDI file into the EDI processed directory.
+	F.Intrinsic.Control.If(V.Global.sFileEDIContents.Trim, <>, "")
+		
+		F.Intrinsic.String.Format(V.Ambient.Date, "YYYYMMDD", V.Local.sTemp)
+		F.Intrinsic.String.Build("EA850_{0}{1}", V.Local.sTemp,  V.Caller.CompanyCode, V.Local.sEDIName)
+		F.Intrinsic.String.Build("{0}{1}", V.Global.sEDIDirectory, V.Local.sEDIName, V.Local.sDestination)
+		F.Intrinsic.File.String2File(V.Local.sDestination, V.Global.sFileEDIContents)
+		
+		'Report it to the logs and print the logs
+		F.Intrinsic.String.Build("{0}{1}", V.Global.sLOGDirectory, V.Local.sEDIName, V.Local.sDestination)
+		F.Intrinsic.String.Build("{0}{1}{1}FPT file process has been completed. You can find file {2} in the directory {3} ready for EDI to process.", V.Global.sLogging, V.Ambient.NewLine, V.Local.sEDIName, V.Global.sEDIDirectory, V.Global.sLogging)
+		F.Intrinsic.File.String2File(V.Local.sDestination, V.Global.sLogging)
+		
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.GrabData.End
+
+Program.Sub.AddEDIField.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sTemp.Declare(String, "")
+
+'Cheap imitation of how Alejandro's EDI project works. We are just going to grab the passed data and use it to paste it into the body of the string
+'The expected passed variables are: VALUE, LENGTH
+F.Intrinsic.String.Replace(V.Args.VALUE, V.Ambient.DblQuote, "", V.Local.sTemp)
+F.Intrinsic.String.RPad(V.Local.sTemp, " ", V.Args.LENGTH.Long, V.Local.sTemp)
+
+F.Intrinsic.String.Build("{0}{1}", V.Global.sSingleFile, V.Local.sTemp, V.Global.sSingleFile)
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.AddEDIField.End
+
+Program.Sub.AddEDIFieldFloat.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sTemp.Declare(String, "")
+V.Local.sWhole.Declare(String, "")
+V.Local.sDecimal.Declare(String, "")
+
+'Cheap imitation of how Alejandro's EDI project works. We are using this subroutine for floats. Float fields in the EDI are period less, so we need to pad the strings appropriately
+'The expected passed variables are: VALUE, WHOLELENGTH, DECIMALLENGTH
+F.Intrinsic.String.Replace(V.Args.VALUE, V.Ambient.DblQuote, "", V.Local.sTemp)
+
+F.Intrinsic.Control.If(V.Local.sTemp, <>, "")
+	F.Intrinsic.String.Split(V.Local.sTemp, ".", V.Local.sTemp)
+	V.Local.sTemp.RedimPreserve(0,1)
+	F.Intrinsic.String.LPad(V.Local.sTemp(0).Trim, "0", V.Args.WHOLELENGTH.Long, V.Local.sWhole)
+	F.Intrinsic.String.RPad(V.Local.sTemp(1).Trim, "0", V.Args.DECIMALLENGTH.Long, V.Local.sDecimal)
+
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.RPad("", "0", V.Args.WHOLELENGTH.Long, V.Local.sWhole)
+	F.Intrinsic.String.RPad("", "0", V.Args.DECIMALLENGTH.Long, V.Local.sDecimal)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("{0}{1}{2}", V.Global.sSingleFile, V.Local.sWhole, V.Local.sDecimal, V.Global.sSingleFile)
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.AddEDIFieldFloat.End
+
+Program.Sub.ProcessFile.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sPathFile.Declare(String, "")
+V.Local.sFileContents.Declare(String, "")
+V.Local.sHeadContents.Declare(String, "")
+V.Local.sLineContent.Declare(String, "")
+V.Local.sDestination.Declare(String, "")
+V.Local.sTemp.Declare(String, "")
+V.Local.dTempDate.Declare(Date, "01/01/1900")
+V.Local.iLineNO.Declare(Long, 0)
+V.Local.iLoop.Declare(Long, 0)
+V.Local.iReturn.Declare(Long, 0)
+V.Local.bCheck.Declare(Boolean, False)
+
+'We want to parse the file and append it to the EDI File Content.
+'The incoming CSV files should have the following format:
+ 
+'Vendor?s Info 
+'LineCode = 'R'    =>  EDI Qualifier, EDI Id, Vendor EDI Qualifier, EDI Id 
+ 
+'Header Info 
+'LineCode = 'H'    =>  Po #, PO Date, PO Buyer, 'PP', PO Ship Via, Vendor Parent Name, Vendor Purch Address, Vendor Name, Vendor Purch AddressCity, Vendor Purch AddressState, Vendor Purch AddressZip, Warehouse, Ship To Name, Ship To Address, Ship To City, Ship To State, Ship To Zip, Bill To Name1, Bill To Name2, Bill To Address, Bill To City, Bill To State, Bill To Zip, Bill To Phone, Total Quantity, Sub-Total, PO Freight, Total Amount, PO Notes, PO Notes, PO Notes, PO Notes, PO Notes, PO Notes
+
+'Lines Info 
+'LineCode = 'D'     =>  PartNumber, Item, Description, Quantity, EA, Price, Line Cost
+
+'We are going to be building the EDI file in the order that we need it to be according to the EDI documentation for 85A transactions:
+
+'The file name will be passed in variable FILE for us to read in
+
+F.Intrinsic.String.Build("{0}{2}Processing file {1}.{2}", V.Global.sLogging, V.Args.FILE, V.Ambient.NewLine, V.Global.sLogging)
+
+F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+F.Intrinsic.File.File2String(V.Local.sPathFile, V.Local.sFileContents)
+
+'Through our time parsing incoming files, we will be verifying that required fields are made available
+F.Intrinsic.Control.If(V.Local.sFileContents, <>, "")
+	F.Intrinsic.String.Split(V.Local.sFileContents, V.Ambient.NewLine, V.Local.sFileContents)
+	F.Intrinsic.Control.If(V.Local.sFileContents.UBound, >, 1)
+		'The first line will be for the vendor info, which is not useful for our purposes. Header info is at index 1
+		F.Intrinsic.String.Split(V.Local.sFileContents(1), ",", V.Local.sHeadContents)
+		F.Intrinsic.Control.If(V.Local.sHeadContents.UBound, >, 15)
+			F.Intrinsic.Control.If(V.Local.sHeadContents(0).UCase, =, "H")
+				'We are on a good track and can begin building information
+				V.Local.sHeadContents.RedimPreserve(0,35)
+				
+				'First value in header is the BUYER ID (35) In this case the hardcoded value 1800RADIATOR padded of course to 36 characters---------------------------------------------------------
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1800RADIATOR", "LENGTH", 35)
+				
+				'PO number (15)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(1), "LENGTH", 15)
+				F.Intrinsic.String.Build("{0}{1}Processing header information. PO number '{2}'.{1}", V.Global.sLogging, V.Ambient.NewLine, V.Local.sHeadContents(1), V.Global.sLogging)
+				
+				'Line NBR (3) For the header information, it is 000
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "000", "LENGTH", 3)
+				
+				'Change Order should be blank
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 1)
+				
+				'PO Date (CCYYMMDD)
+				F.Intrinsic.String.Replace(V.Local.sHeadContents(2), V.Ambient.DblQuote, "", V.Local.sTemp)
+				F.Intrinsic.Date.IsDate(V.Local.sTemp, V.Local.bCheck)
+				F.Intrinsic.Control.If(V.Local.bCheck, =, False)
+					'Date not valid
+					'Header information not where expected (second line not preceeded with an H)
+					F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+					F.Intrinsic.String.Build("{0}{1}", V.Global.sERRDirectory, V.Args.FILE, V.Local.sDestination)
+					F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+					
+					F.Intrinsic.String.Build("The date field {0} for the PO date in file {1} is not a valid date.", V.Local.sTemp, V.Args.FILE, V.Local.sError)
+					F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+					V.Global.sSingleFile.Set("")
+					F.Intrinsic.Control.ExitSub
+					
+				F.Intrinsic.Control.EndIf
+				
+				V.Local.dTempDate.Set(V.Local.sTemp)
+'				F.Intrinsic.Date.ConvertDString(V.Local.sHeadContents(2), "DD/MM/YY", V.Local.dTempDate)
+				F.Intrinsic.String.Format(V.Local.dTempDate, "YYYYMMDD", V.Local.sTemp)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sTemp, "LENGTH", 8)
+				
+				'Dont need ship date
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 8)
+				
+				'Skip down to Ship-To-Code (17)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(11), "LENGTH", 17)
+				
+				'Next few will be empty up to the record type on location 511
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 423)
+				
+				'Record Type (1) H for header
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "H", "LENGTH", 1)
+				
+				'Then we go into the next record
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sSingleFile, V.Ambient.NewLine, V.Global.sSingleFile)
+				
+				'The next record is for Header A.-----------------------------------------------------------------------------------------------------------------------------------------------
+				'Starting with Buyer-ID
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1800RADIATOR", "LENGTH", 35)
+				
+				'PO number (15)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(1), "LENGTH", 15)
+				
+				'Line NBR (3) For the header information, it is 000
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "000", "LENGTH", 3)
+				
+				'Change Order (1) and Contract Number (6) will be blank
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 7)
+				
+				'User 1 (30)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(6).Trim, "LENGTH", 30)
+				
+				'User 2 (30)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(7).Trim, "LENGTH", 30)
+				
+				'User 3 (30)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(8).Trim, "LENGTH", 30)
+				
+				'User 4 (30)
+				F.Intrinsic.String.Build("{0}, {1}, {2}", V.Local.sHeadContents(9).Trim, V.Local.sHeadContents(10).Trim, V.Local.sHeadContents(11).Trim, V.Local.sTemp)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sTemp, "LENGTH", 30)
+				
+				'User 5 (30)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 30)
+				
+				'Order Sort 1 (20)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "EDI1800", "LENGTH", 20)
+				
+				'Order Sort 2 (30)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(12).Trim, "LENGTH", 30)
+				
+				'The Order Currency (3) and Bill Contact Email (100) will be blank
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 103)
+				
+				'Via (20)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(5).Trim, "LENGTH", 20)
+				
+				'Everything else will be blank up to the Record Type
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 127)
+				
+				'Record Type (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "A", "LENGTH", 1)
+				
+				'Then we go into the next record
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sSingleFile, V.Ambient.NewLine, V.Global.sSingleFile)
+				
+				'The next record is for header B -------------------------------------------------------------------------------------------------------------------------------------------------
+				'Starting with Buyer-ID
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1800RADIATOR", "LENGTH", 35)
+				
+				'PO number (15)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(1), "LENGTH", 15)
+				
+				'Line NBR (3) For the header information, it is 000
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "000", "LENGTH", 3)
+				
+				'Change Order (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 1)
+				
+				'Bill To Name (40)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(18).Trim, "LENGTH", 40)
+				
+				'Bill To Address 1 (40)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(19).Trim, "LENGTH", 40)
+				
+				'Bill To Address 2 (40)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(20).Trim, "LENGTH", 40)
+				
+				'Bill To Address 3 (40), Bill To Address 4 (40), Bill To Address 5 (40)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 120)
+				
+				'Bill To City (25)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(21).Trim, "LENGTH", 25)
+				
+				'Bill To State (2)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(22).Trim, "LENGTH", 2)
+				
+				'Bill To Zip (13)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(23).Trim, "LENGTH", 13)
+				
+				'Bill to Country (25), Bill to Attn (40), Bill to Contact (30)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 95)
+				
+				'Bill to Phone (20)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(24).Trim, "LENGTH", 20)
+				
+				'Bill to Intl Address (1), Filler (60)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 61)
+				
+				'Record Type (1) B
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "B", "LENGTH", 1)
+				
+				'Then we go into the next record
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sSingleFile, V.Ambient.NewLine, V.Global.sSingleFile)
+				
+				'The next record is for header C --------------------------------------------------------------------------------------------------------------------------------------------------
+				'Starting with Buyer-ID
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1800RADIATOR", "LENGTH", 35)
+				
+				'PO number (15)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(1), "LENGTH", 15)
+				
+				'Line NBR (3) For the header information, it is 000
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "000", "LENGTH", 3)
+				
+				'Change Order (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 1)
+				
+				'Ship-To Name (40)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(13).Trim, "LENGTH", 40)
+				
+				'Ship To Address 1 (40), Ship To Address 2 (40), Ship To Address 3 (40)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(14).Trim, "LENGTH", 120)
+				
+				'Ship To Address 4 (40), Ship to Address 5 (40)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 80)
+				
+				'Ship To City (25)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(15).Trim, "LENGTH", 25)
+				
+				'Ship To State (2)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(16).Trim, "LENGTH", 2)
+				
+				'Ship To Zip (13)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(17).Trim, "LENGTH", 13)
+				
+				'Ship To Country (25), Ship to Attn (40), Ship to Intl Address (1), Filler (110)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 176)
+				
+				'Record Type (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "C", "LENGTH", 1)
+				
+				'Next Line
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sSingleFile, V.Ambient.NewLine, V.Global.sSingleFile)
+				
+				'We now start with the lines. The first line we write will be for the freight
+				'Starting with Buyer-ID -------------------------------------------------------------------------------------------------------------------------------------------------------
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1800RADIATOR", "LENGTH", 35)
+				
+				'PO number (15)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(1), "LENGTH", 15)
+				
+				'Line NBR (3) For the line information, it is the line number padded with zeroes
+				V.Local.iLineNO.Set(1)
+				F.Intrinsic.String.LPad(V.Local.iLineNO, "0", 3, V.Local.sTemp)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sTemp, "LENGTH", 3)
+				
+				'Change Order (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 1)
+				
+				'Buyer Part Num (20)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "FREIGHT", "LENGTH", 20)
+				
+				'Buyer Part Loc (2)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 2)
+				
+				'Order Quantity (8V4)
+				F.Intrinsic.Control.CallSub(AddEDIFieldFloat, "VALUE", V.Local.sHeadContents(27).Float, "WHOLELENGTH", 8, "DECIMALLENGTH", 4)
+				
+				'UOM (2)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 2)
+				
+				'Price (8V5)
+				F.Intrinsic.Control.CallSub(AddEDIFieldFloat, "VALUE", "0.0", "WHOLELENGTH", 8, "DECIMALLENGTH", 5)
+				
+				'Part Description (30), Bulk Num (30)....A lot of other fields we are not using for the Freight
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 371)
+				
+				'Item Promise Date (8) CCYYMMDD
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "20991231", "LENGTH", 8)
+				
+				'Everything else up to the line type is  blank
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 28)
+				
+				'Line Type (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1", "LENGTH", 1)
+				
+				F.Intrinsic.Math.Sub(V.Local.sFileContents.UBound, 2, V.Local.iLoop)
+				F.Intrinsic.String.Build("{0}{1}Processing lines. {2} lines to be processed for PO {3}.", V.Global.sLogging, V.Ambient.NewLine, V.Local.iLoop, V.Local.sHeadContents(1), V.Global.sLogging)
+				F.Intrinsic.Control.For(V.Local.iLoop, 2, V.Local.sFileContents.UBound, 1)
+					
+					F.Intrinsic.Control.If(V.Local.sFileContents(V.Local.iLoop), <>, "OOB")
+						
+						F.Intrinsic.String.Split(V.Local.sFileContents(V.Local.iLoop), ",", V.Local.sLineContent)
+						
+						F.Intrinsic.Control.If(V.Local.sLineContent.UBound, >, 4)
+							
+							V.Local.sLineContent.RedimPreserve(0,7)
+							
+							V.Local.sTemp.Set(V.Local.sLineContent(0).Trim)
+							F.Intrinsic.Control.If(V.Local.sTemp.UCase, =, "D")
+								
+								'Next Line
+								F.Intrinsic.String.Build("{0}{1}", V.Global.sSingleFile, V.Ambient.NewLine, V.Global.sSingleFile)
+								
+								'We now start with the lines. The first line we write will be for the freight
+								'Starting with Buyer-ID --------------------------------------------------------------------------------------------------------------------------------------
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1800RADIATOR", "LENGTH", 35)
+								
+								'PO number (15)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(1), "LENGTH", 15)
+								
+								'Line NBR (3) For the line information, it is the line number padded with zeroes
+								F.Intrinsic.Math.Add(V.Local.iLineNO, 1, V.Local.iLineNO)
+								F.Intrinsic.String.LPad(V.Local.iLineNO, "0", 3, V.Local.sTemp)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sTemp, "LENGTH", 3)
+								
+								'Change Order (1)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 1)
+								
+								'Buyer Part Number (20)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sLineContent(1), "LENGTH", 20)
+								
+								'Buyer Part Location (2)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 2)
+								
+								'Order Quantity (8V4)
+								F.Intrinsic.Control.CallSub(AddEDIFieldFloat, "VALUE", V.Local.sLineContent(4), "WHOLELENGTH", 8, "DECIMALLENGTH", 4)
+								
+								'UOM (2)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sLineContent(5), "LENGTH", 2)
+								
+								'Price (8v5)
+								F.Intrinsic.Control.CallSub(AddEDIFieldFloat, "VALUE", V.Local.sLineContent(6), "WHOLELENGTH", 8, "DECIMALLENGTH", 5)
+								
+								'Part Description (30)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sLineContent(3), "LENGTH", 30)
+								
+								'Filler
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 96)
+								
+								'Price Check Dec (1)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "5", "LENGTH", 1)
+								
+								'Filler
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 154)
+								
+								'User 2 (30)
+								F.Intrinsic.String.Build("Price: {0} Cost: {1}", V.Local.sLineContent(6), V.Local.sLineContent(7), V.Local.sTemp)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sTemp, "LENGTH", 30)
+								
+								'Filler
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 60)
+								
+								'Item Promise Date (CCYYMMDD)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "20991231", "LENGTH", 8)
+								
+								'Filler
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 28)
+								
+								'Record Type (1)
+								F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1", "LENGTH", 1)
+						
+							F.Intrinsic.Control.EndIf
+							
+						F.Intrinsic.Control.Else
+							
+							'Check to make sure we are not on the last line
+							V.Local.sTemp.Set(V.Local.sLineContent(0).Trim)
+							F.Intrinsic.Control.If(V.Local.sTemp, <>, "")
+								'Line information incomplete
+								F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+								F.Intrinsic.String.Build("{0}{1}", V.Global.sERRDirectory, V.Args.FILE, V.Local.sDestination)
+								F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+								
+								F.Intrinsic.Math.Sub(V.Local.iLoop, 2, V.Local.iReturn)
+								F.Intrinsic.String.Build("The file {0} is not structured as expected. Line information for line {1} is incomplete. Missing data:{2}{3}{2}", V.Args.FILE, V.Local.iReturn, V.Ambient.NewLine, V.Local.sFileContents(1), V.Local.sError)
+								F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+								F.Intrinsic.Control.ExitSub
+								
+							F.Intrinsic.Control.EndIf
+						F.Intrinsic.Control.EndIf
+						
+					F.Intrinsic.Control.EndIf
+					
+				F.Intrinsic.Control.Next(V.Local.iLoop)
+				
+				'Last line shoud be the notes line
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sSingleFile, V.Ambient.NewLine, V.Global.sSingleFile)
+				
+				'Starting with Buyer-ID -------------------------------------------------------------------------------------------------------------------------------------------------------------
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "1800RADIATOR", "LENGTH", 35)
+				
+				'PO number (15)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sHeadContents(1), "LENGTH", 15)
+				
+				'Line NBR (3) For the header information, it is 000
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "000", "LENGTH", 3)
+				
+				'Change order (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 1)
+				
+				'Note Block (450)
+				F.Intrinsic.String.Build("{0} {1} {2} {3} {4} {5}", V.Local.sHeadContents(29), V.Local.sHeadContents(30), V.Local.sHeadContents(31), V.Local.sHeadContents(32), V.Local.sHeadContents(33), V.Local.sHeadContents(34), V.Local.sTemp)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", V.Local.sTemp, "LENGTH", 450)
+				
+				'Filler (6)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "", "LENGTH", 6)
+				
+				'Record Type (1)
+				F.Intrinsic.Control.CallSub(AddEDIField, "VALUE", "N", "LENGTH", 1)
+				
+				'We will be moving it to the main file content, blanking out the single file and moving the csv file to the processed folder
+				F.Intrinsic.Control.If(V.Global.sFileEDIContents.Trim, =, "")
+					V.Global.sFileEDIContents.Set(V.Global.sSingleFile)
+				F.Intrinsic.Control.Else
+					F.Intrinsic.String.Build("{0}{1}{2}", V.Global.sFileEDIContents, V.Ambient.NewLine, V.Global.sSingleFile, V.Global.sFileEDIContents)
+				F.Intrinsic.Control.EndIf
+				
+				V.Global.sSingleFile.Set("")
+				
+				'If we got to this point, that means that we were successful in building the information for that specific file
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sCONDirectory, V.Args.FILE, V.Local.sDestination)
+				F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+				
+				F.Intrinsic.String.Build("{0}File {1} has been processed successfully.{2}", V.Global.sLogging, V.Args.FILE, V.Ambient.NewLine, V.Global.sLogging)
+				
+			F.Intrinsic.Control.Else
+				'Header information not where expected (second line not preceeded with an H)
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+				F.Intrinsic.String.Build("{0}{1}", V.Global.sERRDirectory, V.Args.FILE, V.Local.sDestination)
+				F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+				
+				F.Intrinsic.String.Build("The file {0} is not structured as expected. Header information expected in line 2, but line does not begin with an 'H':{2}{1}{2}", V.Args.FILE, V.Local.sFileContents(1), V.Ambient.NewLine, V.Local.sError)
+				F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+				
+			F.Intrinsic.Control.EndIf
+			
+		F.Intrinsic.Control.Else
+			'Header information missing stuff (not as many fields as we are expecting)
+			F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+			F.Intrinsic.String.Build("{0}{1}", V.Global.sERRDirectory, V.Args.FILE, V.Local.sDestination)
+			F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+			
+			F.Intrinsic.String.Build("The file {0} is not structured as expected. Header information is missing fields to fulfill order creation:{2}{1}{2}", V.Args.FILE, V.Local.sFileContents(1), V.Ambient.NewLine, V.Local.sError)
+			F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+			
+		F.Intrinsic.Control.EndIf
+		
+	F.Intrinsic.Control.Else
+		'Data appears to be missing from file (Only two lines in file)
+		F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+		F.Intrinsic.String.Build("{0}{1}", V.Global.sERRDirectory, V.Args.FILE, V.Local.sDestination)
+		F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+		
+		F.Intrinsic.String.Build("The file {0} is not structured as expected. Only two lines in csv file detected:{2}{1}{2}", V.Args.FILE, V.Local.sFileContents(1), V.Ambient.NewLine, V.Local.sError)
+		F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Else
+	'File appears to be empty
+	F.Intrinsic.String.Build("{0}{1}", V.Global.sFTPDirectory, V.Args.FILE, V.Local.sPathFile)
+	F.Intrinsic.String.Build("{0}{1}", V.Global.sERRDirectory, V.Args.FILE, V.Local.sDestination)
+	F.Intrinsic.File.MoveFile(V.Local.sPathFile, V.Local.sDestination, V.Local.iReturn)
+	
+	F.Intrinsic.String.Build("The file {0} is empty.{1}", V.Args.FILE, V.Ambient.NewLine, V.Local.sError)
+	F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+		
+F.Intrinsic.Control.EndIf
+
+V.Global.sSingleFile.Set("")
+
+F.Intrinsic.Control.Catch
+
+F.Intrinsic.String.Build("{0} in subroutine {1}.", V.Ambient.ErrorDescription, V.Ambient.CurrentSubroutine, V.Local.sError)
+F.Intrinsic.Control.CallSub(ErrorHandling, "ERRDESC", V.Local.sError)
+
+F.Intrinsic.Control.EndTry
+Program.Sub.ProcessFile.End
